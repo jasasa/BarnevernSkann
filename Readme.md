@@ -2,6 +2,7 @@
 BarnevernSkann er laget for å pushe skannede PDF-filer til fagsystemet Modulus Barn, levert av NetCompany.
 Det skal brukes mot mailing-API i Modulus Barn, som krever autentisering via DigDir Maskinporten.
 
+Fork av kode laget av Bergen kommune - tilpasset for å vbirke i Øygarden kommune.
 
 ## Systemkrav
 BarnevernSkann kan enten kjøres som skript eller bygges til et program. Begge deler krever Python 3.10 eller nyere.
@@ -28,6 +29,7 @@ Følgende felter finnes i konfigurasjonen
 - "maskinportenScope": "_Maskinporten scope som kreves for å bruke API i Modulus Barn_",
 - "maskinportenIssuer": "_Maskinporten IntegrasjonsID_",
 - "modulusUrl": "_Modulus Barn URL, eksempelvis https://test.modulus-barn.no/_",
+- "unitCode": "_Navn på enhet dokumentene skal sendes til_"
 - "timeout": _Timeout skal være likt TTL i Maskinporten-integrasjonen. Tid oppgis i sekunder, eksempelvis 60._
 
 Merk at felter skal utenom timeout skal være formatert som string med " " rundt som spesifisert i JSON-standarden.
@@ -40,24 +42,14 @@ Det anbefales å sette opp regelmessig kjøring via eksempelvis Crontab eller Sc
 
 Katalogstrukturen i programmet skal være som følger
 - .../_konfigurerbar hovedkatalog_/
-  - _distrikt/barnevernstjeneste/bydel 1_/
-  - _distrikt/barnevernstjeneste/bydel 2_/
-  - _distrikt/barnevernstjeneste/bydel 3_/
+  - _Navn på bruker som skanner_/
+  - _Navn på bruker som skanner_/
   - .../
   - _Finished_/
   - _Failed_/
   - _Logs_/
 
-
-Navn på underkataloger skal matche enhetskode i Modulus Barn der dokumentet hører hjemme, eksempelvis
-- _BK-FYBD-FYBV/_ - Bergen Kommune, Fana og Ytrebygda bydel, Fana og Ytrebygda Barnevernstjeneste.
-Finished, Failed og Logs vil bli opprettet automatisk ved første kjøring hvis de ikke eksisterer.
-
-Det er lagt opp til at brukernavnet på personen som skannet dokumentet skal ligge i de første 5 karakterene av filnavnet, 
-og sendes med til Modulus Barn, men dette kan endres i koden. Format kan også endres i koden.
-Hvis det ikke sendes med noe brukernavn, vil "Skannet av"-feltet i Modulus Barn settes til "Ukjent"
-
-Når BarnevernSkann er kjørt vil alle skannede dokumenter dukke opp i postlisten på enhet tilsvarende navn på katalogen dokumentet lå i.
+Når BarnevernSkann er kjørt vil alle skannede dokumenter dukke opp i postlisten på enhet oppgitt i config-fil.
 Ferdige dokumenter som er lastet opp vil bli flyttet til _Finished_.
 
 Dokumenter som av en eller annen grunn feiler vil bli prøvd på nytt automatisk.

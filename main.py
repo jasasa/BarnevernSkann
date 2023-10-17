@@ -28,6 +28,7 @@ config = json.loads(configFile.read())
 
 workingDirectory = str(config['workingDirectory'])  # directory where scanned documents are found
 privateKeyFile = str(config['privateKeyFile'])  # private key file
+unitCode = str(config['unitCode'])  # enhetskode (Location imported documents)
 
 
 def readkey(fk):  # read private key function
@@ -84,16 +85,10 @@ def maskinporttokenpostrequest():  # creates JWT and requests access token from 
 
 
 def apimoduluspostrequest(token, doc, district, fileName):  # push data to api with post-request
-    if userformatcheck(fileName[0:5]):  # if username fits Bergen format, change to whatever format you use
-        request_body = {'title': 'Skannet ' + str(fileName), 'unit': district, 'note': 'Skannet dokument',
-                       'scannedBy': fileName[0:5], 'documents': doc}
-        header = {'user-agent': 'BarnevernSkann/1.0.2', 'Accept': 'application/json',
-                  'Authorization': f'Bearer {token}'}
-    else:  # else unknown user
-        request_body = {'title': 'Skannet ' + str(fileName), 'unit': district, 'note': 'Skannet dokument',
-                       'scannedBy': 'Ukjent', 'documents': doc}
-        header = {'user-agent': 'BarnevernSkann/1.0.2', 'Accept': 'application/json',
-                  'Authorization': f'Bearer {token}'}
+    request_body = {'title': 'Skannet ' + str(fileName), 'unit': unitCode, 'note': 'Skannet dokument',
+                   'scannedBy': district, 'documents': doc}
+    header = {'user-agent': 'BarnevernSkann/1.0.2', 'Accept': 'application/json',
+              'Authorization': f'Bearer {token}'}
 
     session = requests.Session()  # new requests session
 
@@ -132,68 +127,66 @@ if __name__ == '__main__':
         logger.close()
         sys.exit(-1)  # exit with error code, no point in trying if token can't be requested
 
-    else:  # working token received, going through directories and sending files
-        for dirs in os.scandir(workingDirectory):
+    # working token received, going through directories and sending files
+    for dirs in os.scandir(workingDirectory):
+        # making sure we don't upload files from Failed, Finished and Logs directories. Ignore files in WorkingDirectory.
+        if not os.path.isdir(dirs.path) or str(dirs.name) == 'Failed' or str(dirs.name) == 'Finished' or str(dirs.name) == 'Logs':
+            continue
+        for file in os.scandir(dirs.path):  # getting each file in the folder
+            # Check if file and filename includes pdf.
+            if not file.is_file() or 'pdf' not in file.name:
+                continue
+            currentTime = datetime.now()
 
-            # making sure we don't upload files from Failed, Finished and Logs directories
-            if str(dirs.name) != 'Failed' and str(dirs.name) != 'Finished' and str(dirs.name) != 'Logs':
+            try:  # preventing potential OSErrors from stopping upload
+                scanFile = open(str(file.path), 'rb')
+                yay = scanFile.read()
+                scanFile.close()
 
-                for file in os.scandir(dirs.path):  # getting each file in the folder
-                    if file.is_file() and 'pdf' in file.name:
-                        currentTime = datetime.now()
+                document = [
+                    {'title': str(file.name), 'mimeType': 'application/pdf',
+                     'file': base64.b64encode(yay).decode()}]  # only PDFs are accepted, b64 encode the file
 
-                        try:  # preventing potential OSErrors from stopping upload
-                            scanFile = open(str(file.path), 'rb')
-                            yay = scanFile.read()
-                            scanFile.close()
+                # attempt initial post request, get response as an object for further handling
+                response = apimoduluspostrequest(maskinToken['access_token'],
+                                                 document, str(dirs.name), str(file.name))
 
-                            document = [
-                                {'title': str(file.name), 'mimeType': 'application/pdf',
-                                 'file': base64.b64encode(yay).decode()}]  # only PDFs are accepted, b64 encode the file
+                # handle the api response here
+                if response['code'] == '204':  # log success, move to finished
+                    shutil.move(file.path, str(workingDirectory + 'Finished/' + file.name))
+                    logger.write(datetime.strftime(currentTime, '%Y-%m-%d %H:%M:%S') +
+                                 ' - ' + str(file.name) + ' successfully uploaded: ' + str(response) + '\n')
 
-                            # attempt initial post request, get response as an object for further handling
-                            response = apimoduluspostrequest(maskinToken['access_token'],
-                                                             document, str(dirs.name), str(file.name))
+                elif response['code'] == '400':  # log missing fields, move to failed
+                    shutil.move(file.path, str(workingDirectory + 'Failed/' + file.name))
+                    logger.write(datetime.strftime(currentTime, '%Y-%m-%d %H:%M:%S') +
+                                 ' - ' + str(file.name) + ' failed with error: ' + str(response) + '\n')
 
-                            # handle the api response here
-                            if response['code'] == '204':  # log success, move to finished
-                                shutil.move(file.path, str(workingDirectory + 'Finished/' + file.name))
-                                logger.write(datetime.strftime(currentTime, '%Y-%m-%d %H:%M:%S') +
-                                             ' - ' + str(file.name) + ' successfully uploaded: ' + str(response) + '\n')
+                elif response['code'] == '403':  # log invalid token, get new token and try again
+                    maskinToken = maskinporttokenpostrequest()
+                    nextResponse = apimoduluspostrequest(maskinToken['access_token'],
+                                                         document, str(dirs.name), str(file.name))
+                    logger.write(datetime.strftime(currentTime, '%Y-%m-%d %H:%M:%S') +
+                                 ' - Maskinporten token expired, retrying...\n')
 
-                            elif response['code'] == '400':  # log missing fields, move to failed
-                                shutil.move(file.path, str(workingDirectory + 'Failed/' + file.name))
-                                logger.write(datetime.strftime(currentTime, '%Y-%m-%d %H:%M:%S') +
-                                             ' - ' + str(file.name) + ' failed with error: ' + str(response) + '\n')
+                    if nextResponse['code'] == '204':  # log success, move to finished
+                        shutil.move(file.path, str(workingDirectory + 'Finished/' + file.name))
+                        logger.write(datetime.strftime(currentTime, '%Y-%m-%d %H:%M:%S') +
+                                     ' - ' + str(file.name) + ' successfully uploaded: ' + str(response) + '\n')
 
-                            elif response['code'] == '403':  # log invalid token, get new token and try again
-                                maskinToken = maskinporttokenpostrequest()
-                                nextResponse = apimoduluspostrequest(maskinToken['access_token'],
-                                                                     document, str(dirs.name), str(file.name))
-                                logger.write(datetime.strftime(currentTime, '%Y-%m-%d %H:%M:%S') +
-                                             ' - Maskinporten token expired, retrying...\n')
+                    else:  # log failed, moved to failed
+                        shutil.move(file.path, str(workingDirectory + 'Failed/' + file.name))
+                        logger.write(datetime.strftime(currentTime, '%Y-%m-%d %H:%M:%S') +
+                                     ' - ' + str(file.name) + ' failed with error: ' + str(response) + '\n')
 
-                                if nextResponse['code'] == '204':  # log success, move to finished
-                                    shutil.move(file.path, str(workingDirectory + 'Finished/' + file.name))
-                                    logger.write(datetime.strftime(currentTime, '%Y-%m-%d %H:%M:%S') +
-                                                 ' - ' + str(file.name) + ' successfully uploaded: ' + str(
-                                        response) + '\n')
-
-                                else:  # log failed, moved to failed
-                                    shutil.move(file.path, str(workingDirectory + 'Failed/' + file.name))
-                                    logger.write(datetime.strftime(currentTime, '%Y-%m-%d %H:%M:%S') +
-                                                 ' - ' + str(file.name) + ' failed with error: ' + str(response) + '\n')
-
-                            else:  # handle any other potential errors
-                                logger.write(datetime.strftime(currentTime, '%Y-%m-%d %H:%M:%S') +
-                                             ' - ' + str(file.name) + ' failed with error: ' + str(response) + '\n')
-                                logger.close()
-                                sys.exit(-1)  # exiting, no point retrying if HTTP errors prevent communication
-
-                        except OSError as e:
-                            logger.write(datetime.strftime(currentTime, '%Y-%m-%d %H:%M:%S') +
-                                         ' - ' + str(file.name) + ' failed with error: ' + str(e) + '\n')
-
-        logger.write(datetime.strftime(datetime.now(), '%Y-%m-%d %H:%M:%S') + ' - Uploads done!')
-        logger.close()
-        sys.exit(0)
+                else:  # handle any other potential errors
+                    logger.write(datetime.strftime(currentTime, '%Y-%m-%d %H:%M:%S') +
+                                 ' - ' + str(file.name) + ' failed with error: ' + str(response) + '\n')
+                    logger.close()
+                    sys.exit(-1)  # exiting, no point retrying if HTTP errors prevent communication
+            except OSError as e:
+                logger.write(datetime.strftime(currentTime, '%Y-%m-%d %H:%M:%S') +
+                             ' - ' + str(file.name) + ' failed with error: ' + str(e) + '\n')
+    logger.write(datetime.strftime(datetime.now(), '%Y-%m-%d %H:%M:%S') + ' - Uploads done!\n')
+    logger.close()
+    sys.exit(0)

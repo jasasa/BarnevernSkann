@@ -2,7 +2,7 @@
 BarnevernSkann er laget for å pushe skannede PDF-filer til fagsystemet Modulus Barn, levert av NetCompany.
 Det skal brukes mot mailing-API i Modulus Barn, som krever autentisering via DigDir Maskinporten.
 
-Fork av kode laget av Bergen kommune - tilpasset for å vbirke i Øygarden kommune.
+Fork av kode laget av Bergen kommune - tilpasset for å virke i Øygarden kommune.
 
 ## Systemkrav
 BarnevernSkann kan enten kjøres som skript eller bygges til et program. Begge deler krever Python 3.10 eller nyere.

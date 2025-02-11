@@ -23,6 +23,7 @@ import base64
 import shutil
 from datetime import datetime, timezone, timedelta
 
+version = 'BarnevernSkann v1.0.6'
 configFile = open('config.json', 'r')  # get config
 config = json.loads(configFile.read())
 
@@ -46,7 +47,7 @@ def userformatcheck(userName):  # username format validator function
     return userName.isalnum() and not userName.isalpha() and not userName.isdigit()
 
 
-def maskinporttokenpostrequest():  # creates JWT and requests access token from Maskinporten
+def maskinporttokenpostrequest(logFile, timeStamp):  # creates JWT and requests access token from Maskinporten
     iat = datetime.now(tz=timezone.utc)
     exp = datetime.now(tz=timezone.utc) + timedelta(seconds=int(config['timeout']))
 
@@ -71,36 +72,40 @@ def maskinporttokenpostrequest():  # creates JWT and requests access token from 
 
     token = jwt.encode(payload=mportPayload, key=privateKey, algorithm='RS256', headers=mportHeader)  # make the JWT
 
-    session = requests.Session()  # new requests session
+    try:
+        session = requests.Session()  # new requests session
 
-    r = session.post(str(config['maskinportenUrl']) + 'token',  # post request to Maskinporten
-                     headers={'content-type': 'application/x-www-form-urlencoded'},
-                     data=('grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=' + str(token)))
-    r.close()
+        r = session.post(str(config['maskinportenUrl']) + 'token',  # post request to Maskinporten
+                        headers={'content-type': 'application/x-www-form-urlencoded', 'user-agent': version},
+                        data=('grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=' + str(token)))
+        r.close()
 
-    if r.status_code == 200:  # success, return answer
-        return r.json()
-    else:  # return response and json content as list for error handling
-        return [r.status_code, r.json()]
+        return [r.status_code, r.json()]  # return response and json content
+    except Exception as error:
+        logFile.write(datetime.strftime(timeStamp, '%Y-%m-%d %H:%M:%S') + str(error))
+        sys.exit(-1)
 
 
-def apimoduluspostrequest(token, doc, district, fileName):  # push data to api with post-request
+def apimoduluspostrequest(token, doc, district, fileName, logFile, timeStamp):  # push data to api with post-request
     request_body = {'title': 'Skannet ' + str(fileName), 'unit': unitCode, 'note': 'Skannet dokument',
                    'scannedBy': district, 'documents': doc}
-    header = {'user-agent': 'BarnevernSkann/1.0.2', 'Accept': 'application/json',
+    header = {'user-agent': version, 'Accept': 'application/json',
               'Authorization': f'Bearer {token}'}
 
-    session = requests.Session()  # new requests session
+    try:
+        session = requests.Session()  # new requests session
 
-    r = session.post(str(config['modulusUrl']) + 'external-api/v1/mailing', headers=header, json=request_body,
+        r = session.post(str(config['modulusUrl']) + 'external-api/v1/mailing', headers=header, json=request_body,
                      allow_redirects=False)  # post request to Modulus api
-    r.close()
+        r.close()
 
-    if r.status_code == 204:  # response status code handling, api doesn't return json content if 204 success
-        return {'code': '204'}
-    else:  # return response json content for error handling
-        return r.json()
-
+        if r.status_code == 204:  # response status code handling, api doesn't return json content if 204 success
+            return {'code': '204'}
+        else:  # return response json content for error handling
+            return r.json()
+    except Exception as error:
+        logFile.write(datetime.strftime(timeStamp, '%Y-%m-%d %H:%M:%S') + str(error))
+        sys.exit(-1)
 
 if __name__ == '__main__':
     dirsList = []
@@ -119,9 +124,9 @@ if __name__ == '__main__':
     currentTime = datetime.now()
     logger.write(datetime.strftime(currentTime, '%Y-%m-%d %H:%M:%S') + ' - Starting uploads...\n')
 
-    maskinToken = maskinporttokenpostrequest()  # request Maskinporten token
+    maskinToken = maskinporttokenpostrequest(logger, currentTime)  # request Maskinporten token
 
-    if isinstance(maskinToken, list):  # failed to get token due to HTTP error
+    if maskinToken[0] != 200:  # failed to get token due to HTTP error
         logger.write(datetime.strftime(currentTime, '%Y-%m-%d %H:%M:%S') +
                      ' - Maskinporten token request failed with error: ' + str(maskinToken) + '\n')
         logger.close()
@@ -148,8 +153,8 @@ if __name__ == '__main__':
                      'file': base64.b64encode(yay).decode()}]  # only PDFs are accepted, b64 encode the file
 
                 # attempt initial post request, get response as an object for further handling
-                response = apimoduluspostrequest(maskinToken['access_token'],
-                                                 document, str(dirs.name), str(file.name))
+                response = apimoduluspostrequest(maskinToken[1]['access_token'],
+                                                 document, str(dirs.name), str(file.name), logger, currentTime)
 
                 # handle the api response here
                 if response['code'] == '204':  # log success, move to finished
@@ -163,9 +168,9 @@ if __name__ == '__main__':
                                  ' - ' + str(file.name) + ' failed with error: ' + str(response) + '\n')
 
                 elif response['code'] == '403':  # log invalid token, get new token and try again
-                    maskinToken = maskinporttokenpostrequest()
-                    nextResponse = apimoduluspostrequest(maskinToken['access_token'],
-                                                         document, str(dirs.name), str(file.name))
+                    maskinToken = maskinporttokenpostrequest(logger, currentTime)
+                    nextResponse = apimoduluspostrequest(maskinToken[1]['access_token'],
+                                                         document, str(dirs.name), str(file.name), logger, currentTime)
                     logger.write(datetime.strftime(currentTime, '%Y-%m-%d %H:%M:%S') +
                                  ' - Maskinporten token expired, retrying...\n')
 
